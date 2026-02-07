@@ -1,0 +1,26 @@
+{
+	"id": "nextologies-nextotalk",
+	"name": "Nextologies Meet Controller",
+	"shortname": "nextologies-nextotalk",
+	"description": "Nextologies Mic Controller for Google Meet and NextoTalk. Control your mic seamlessly in Google Meet and NextoTalk meetings with quick mute/unmute and push-to-talk capabilities.",
+	"version": "0.0.0",
+	"license": "MIT",
+	"repository": "git+https://github.com/bitfocus/companion-module-nextologies-nextotalk.git",
+	"bugs": "https://github.com/bitfocus/companion-module-nextologies-nextotalk/issues",
+	"maintainers": [
+		{
+			"name": "Pushparaj Jayaseelan",
+			"email": "pushparajj@nextologies.com"
+		}
+	],
+	"runtime": {
+		"type": "node22",
+		"api": "nodejs-ipc",
+		"apiVersion": "0.0.0",
+		"entrypoint": "../dist/main.js"
+	},
+	"legacyIds": [],
+	"manufacturer": "Nextologies Limited",
+	"products": ["NextoTalk"],
+	"keywords": []
+}
