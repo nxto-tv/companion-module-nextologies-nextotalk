@@ -1,5 +1,6 @@
 import { combineRgb } from '@companion-module/base'
 import type { ModuleInstance } from './main.js'
+import { EMPTY_KEY_PNG, MUTE_KEY_PNG, UNMUTE_KEY_PNG } from './assets.js'
 
 export function UpdateFeedbacks(self: ModuleInstance): void {
 	self.setFeedbackDefinitions({
@@ -62,7 +63,8 @@ export function UpdateFeedbacks(self: ModuleInstance): void {
 						return {
 							bgcolor: info.isMuted ? combineRgb(255, 0, 0) : combineRgb(0, 200, 0),
 							color: combineRgb(255, 255, 255),
-							text: `${info.name}\n${info.isMuted ? 'MUTED' : 'LIVE'}`,
+							text: '',
+							png64: info.isMuted ? MUTE_KEY_PNG : UNMUTE_KEY_PNG,
 						}
 					}
 				}
@@ -70,7 +72,8 @@ export function UpdateFeedbacks(self: ModuleInstance): void {
 				return {
 					bgcolor: combineRgb(0, 0, 0),
 					color: combineRgb(100, 100, 100),
-					text: 'Idle',
+					text: '',
+					png64: EMPTY_KEY_PNG,
 				}
 			},
 		},
