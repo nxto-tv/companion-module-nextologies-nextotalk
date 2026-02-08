@@ -13,7 +13,7 @@ export function UpdatePresets(self: ModuleInstance): void {
 			size: 'auto',
 			color: combineRgb(255, 255, 255),
 			bgcolor: combineRgb(0, 0, 0),
-			show_topbar: true,
+			show_topbar: false,
 		},
 		steps: [
 			{
