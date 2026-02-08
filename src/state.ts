@@ -102,5 +102,6 @@ export class ModuleState {
 		this.meetingMicStatusMap = {}
 		this.actionIdMeetingIdMap = {}
 		this.meetingIdActionIdMap = {}
+		this.controlIdToLocationMap.clear()
 	}
 }

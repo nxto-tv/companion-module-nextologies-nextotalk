@@ -87,6 +87,23 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 			case SocketCommandActionType.Join:
 				this.streamAvailableActions(ws)
 				break
+			case SocketCommandActionType.Reset:
+				this.log('info', 'Resetting all module state')
+				this.state.reset()
+				this.lastReportedLocation.clear()
+				this.checkFeedbacks('mic_status')
+
+				// Send acknowledgment response
+				if (command.type === SocketCommandType.Request) {
+					ws.send(
+						JSON.stringify({
+							type: SocketCommandType.Response,
+							action: SocketCommandActionType.Reset,
+							data: { success: true },
+						}),
+					)
+				}
+				break
 			case SocketCommandActionType.MapSDKeyToRoom: {
 				const { sdKeyId, meetingId, coordinates } = command.data
 				if (meetingId !== undefined) this.state.mapActionToMeeting(sdKeyId, meetingId)
@@ -108,6 +125,120 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 			case SocketCommandActionType.GetMicControllerKeys:
 				this.streamAvailableActions(ws)
 				break
+			case SocketCommandActionType.PersistedRoomMeta: {
+				// Build the persisted room metadata response
+				const roomMetaMap: Record<string, { roomNumber: number; sdKeyId: string; roomName?: string }> = {}
+
+				// Iterate through all meetings and build the metadata
+				for (const [meetingId, roomNumber] of Object.entries(this.state.meetingRoomNumberMap)) {
+					const actionId = this.state.meetingIdActionIdMap[meetingId]
+					const roomName = this.state.meetingIdTitleMap[meetingId]
+
+					if (actionId) {
+						roomMetaMap[meetingId] = {
+							roomNumber,
+							sdKeyId: actionId,
+							roomName,
+						}
+					}
+				}
+
+				ws.send(
+					JSON.stringify({
+						type: SocketCommandType.Response,
+						action: SocketCommandActionType.PersistedRoomMeta,
+						data: roomMetaMap,
+					}),
+				)
+
+				this.log('info', `Sent persisted room metadata for ${Object.keys(roomMetaMap).length} meetings`)
+				break
+			}
+			case SocketCommandActionType.AllocateRoom: {
+				const meetingId = command.data.meetingId
+				const serialNumber = this.state.getSerialNumberForMeeting(meetingId)
+
+				if (serialNumber !== null) {
+					// Store room name if provided in the allocation request
+					if (command.data.roomName) {
+						this.state.updateRoomName(meetingId, command.data.roomName)
+					}
+
+					command.data.serialNumber = serialNumber
+
+					// Find a suggested key if possible
+					let suggestedSDKey: any = null
+					const cachedActionId = this.state.meetingIdActionIdMap[meetingId]
+
+					if (cachedActionId) {
+						this.log('debug', `Found cached action ${cachedActionId} for meeting ${meetingId}`)
+						const action = this.activeActions.get(cachedActionId)
+						if (action) {
+							suggestedSDKey = {
+								id: action.id,
+								coordinates: this.getCoordinatesFromAction(action),
+								visible: true,
+							}
+							this.log('debug', `Using cached action as suggested key`)
+						} else {
+							this.log('warn', `Cached action ${cachedActionId} not found in activeActions`)
+						}
+					} else {
+						this.log('debug', `No cached action for meeting ${meetingId}, searching for free button...`)
+						// No previous mapping, find a free visible button
+						suggestedSDKey = this.findNonAllocatedVisibleAction()
+						if (suggestedSDKey) {
+							this.log('info', `Found free button ${suggestedSDKey.id} for meeting ${meetingId}`)
+							this.state.mapActionToMeeting(suggestedSDKey.id, meetingId)
+						} else {
+							this.log('warn', `No free buttons available for meeting ${meetingId}`)
+						}
+					}
+
+					if (suggestedSDKey) {
+						command.data.suggestedSDKey = suggestedSDKey
+						this.log('debug', `Including suggestedSDKey in response: ${JSON.stringify(suggestedSDKey)}`)
+					} else {
+						this.log('warn', `No suggestedSDKey available for meeting ${meetingId}`)
+					}
+
+					ws.send(
+						JSON.stringify({
+							type: SocketCommandType.Response,
+							action: SocketCommandActionType.RoomAllocated,
+							data: command.data,
+						}),
+					)
+
+					this.log('info', `Allocated Room ${serialNumber} for Meeting ${meetingId}`)
+					this.checkFeedbacks('mic_status') // Refresh feedback for UI
+				}
+				break
+			}
+			case SocketCommandActionType.UpdateMicStatus: {
+				const { meetingId, isMuted } = command.data
+				this.state.updateMicStatus(meetingId, isMuted)
+				this.checkFeedbacks('mic_status')
+				break
+			}
+			case SocketCommandActionType.UpdateRoomName: {
+				const { meetingId, roomName } = command.data
+				this.state.updateRoomName(meetingId, roomName)
+				this.log('info', `Updated room name for ${meetingId}: ${roomName}`)
+				this.checkFeedbacks('mic_status')
+
+				// Send acknowledgment response if it was a request
+				if (command.type === SocketCommandType.Request) {
+					ws.send(
+						JSON.stringify({
+							type: SocketCommandType.Response,
+							action: SocketCommandActionType.UpdateRoomName,
+							data: { meetingId, roomName, success: true },
+						}),
+					)
+				}
+				break
+			}
 		}
 	}
 
@@ -221,6 +352,44 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 					)
 				}
 			}
+		}
+	}
+
+	private findNonAllocatedVisibleAction(): any | null {
+		// Visible actions for us are all toggle_mic actions that are currently "appearing"
+		const visibleActions = Array.from(this.activeActions.values()).filter((action) => action.actionId === 'toggle_mic')
+
+		if (visibleActions.length === 0) return null
+
+		const allocatedActionIds = new Set(Object.values(this.state.meetingIdActionIdMap))
+
+		const nonAllocatedVisibleActions = visibleActions.filter((action) => !allocatedActionIds.has(action.id))
+
+		if (nonAllocatedVisibleActions.length === 0) return null
+
+		if (nonAllocatedVisibleActions.length > 1) {
+			nonAllocatedVisibleActions.sort((a, b) => {
+				const c1 = this.getCoordinatesFromAction(a) || { row: 0, column: 0 }
+				const c2 = this.getCoordinatesFromAction(b) || { row: 0, column: 0 }
+				if (c1.row !== c2.row) return c1.row - c2.row
+				return c1.column - c2.column
+			})
+		}
+
+		const picked = nonAllocatedVisibleActions[0]
+		const pickedCoords = this.getCoordinatesFromAction(picked)
+
+		if (!pickedCoords) {
+			this.log('warn', `Could not get coordinates for action ${picked.id}, controlId: ${picked.controlId}`)
+			return null
+		}
+
+		this.log('debug', `Suggesting free action ${picked.id} at row:${pickedCoords.row}, col:${pickedCoords.column}`)
+
+		return {
+			id: picked.id,
+			coordinates: pickedCoords,
+			visible: true,
 		}
 	}
 

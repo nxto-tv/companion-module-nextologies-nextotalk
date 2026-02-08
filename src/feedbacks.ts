@@ -63,7 +63,7 @@ export function UpdateFeedbacks(self: ModuleInstance): void {
 						return {
 							bgcolor: info.isMuted ? combineRgb(255, 0, 0) : combineRgb(0, 200, 0),
 							color: combineRgb(255, 255, 255),
-							text: '',
+							text: info.name,
 							png64: info.isMuted ? MUTE_KEY_PNG : UNMUTE_KEY_PNG,
 						}
 					}
