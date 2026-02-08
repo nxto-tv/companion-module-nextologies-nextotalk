@@ -2,6 +2,7 @@ export type SocketCommand = {
 	type: SocketCommandType
 	action: SocketCommandActionType
 	data: any
+	client?: string
 }
 
 export enum SocketCommandType {

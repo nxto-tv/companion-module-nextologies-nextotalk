@@ -1,4 +1,10 @@
-import { InstanceBase, runEntrypoint, InstanceStatus, SomeCompanionConfigField } from '@companion-module/base'
+import {
+	InstanceBase,
+	runEntrypoint,
+	InstanceStatus,
+	type SomeCompanionConfigField,
+	type CompanionActionInfo,
+} from '@companion-module/base'
 import { GetConfigFields, type ModuleConfig } from './config.js'
 import { UpdateVariableDefinitions } from './variables.js'
 import { UpgradeScripts } from './upgrades.js'
@@ -10,44 +16,38 @@ import { SocketCommandActionType, SocketCommandType, type SocketCommand } from '
 import { ModuleState } from './state.js'
 
 export class ModuleInstance extends InstanceBase<ModuleConfig> {
-	config!: ModuleConfig // Setup in init()
+	config!: ModuleConfig
 	private wss: WebSocketServer | undefined
 	private clients: Set<WebSocket> = new Set()
 	public state: ModuleState = new ModuleState()
+	private activeActions: Map<string, CompanionActionInfo> = new Map()
+	public controlIdToActionId: Map<string, string> = new Map()
+	private lastReportedLocation: Map<string, string> = new Map()
 
 	constructor(internal: unknown) {
 		super(internal)
 	}
 
 	async init(config: ModuleConfig): Promise<void> {
+		this.log('info', 'Initializing Nextotalk Module')
 		this.config = config
-
 		this.updateStatus(InstanceStatus.Ok)
-
 		this.initWebSocketServer()
-
-		this.updateActions() // export actions
-		this.updateFeedbacks() // export feedbacks
-		this.updatePresets() // export Presets
-		this.updateVariableDefinitions() // export variable definitions
+		this.updateActions()
+		this.updateFeedbacks()
+		this.updatePresets()
+		this.updateVariableDefinitions()
 	}
 
-	// When module gets deleted
 	async destroy(): Promise<void> {
-		this.log('debug', 'destroy')
-		if (this.wss) {
-			this.wss.close()
-		}
+		if (this.wss) this.wss.close()
 	}
 
 	async configUpdated(config: ModuleConfig): Promise<void> {
 		const oldPort = this.config.port
 		this.config = config
-
 		if (oldPort !== this.config.port) {
-			if (this.wss) {
-				this.wss.close()
-			}
+			if (this.wss) this.wss.close()
 			this.initWebSocketServer()
 		}
 	}
@@ -55,10 +55,9 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 	private initWebSocketServer(): void {
 		const port = this.config.port || 7005
 		this.wss = new WebSocketServer({ port })
-
 		this.wss.on('connection', (ws) => {
 			this.clients.add(ws)
-			this.log('info', 'Client connected to WebSocket')
+			this.log('info', 'Client Connected to WebSocket Server')
 
 			const welcomePayload: SocketCommand = {
 				type: SocketCommandType.Event,
@@ -71,133 +70,179 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 				try {
 					const command: SocketCommand = JSON.parse((message as Buffer).toString())
 					this.handleMessage(ws, command)
-				} catch (e: any) {
-					this.log('error', `Failed to parse WebSocket message: ${e?.message ?? 'Unknown error'}`)
+				} catch (e) {
+					this.log('error', `WS Parse Error: ${e}`)
 				}
 			})
-
 			ws.on('close', () => {
 				this.clients.delete(ws)
-				this.log('info', 'Client disconnected from WebSocket')
+				this.log('info', 'Client Disconnected')
 			})
 		})
-
-		this.log('info', `WebSocket server started on port ${port}`)
 	}
 
 	private handleMessage(ws: WebSocket, command: SocketCommand): void {
 		this.log('debug', `Received message: ${command.action}`)
-
 		switch (command.action) {
-			case SocketCommandActionType.Join: {
-				this.log('info', `Client joined: ${command.data?.client ?? 'Unknown'}`)
+			case SocketCommandActionType.Join:
+				this.streamAvailableActions(ws)
+				break
+			case SocketCommandActionType.MapSDKeyToRoom: {
+				const { sdKeyId, meetingId, coordinates } = command.data
+				if (meetingId !== undefined) this.state.mapActionToMeeting(sdKeyId, meetingId)
+				if (coordinates) {
+					this.state.setControlLocation(sdKeyId, coordinates.row, coordinates.column)
+					this.checkActionPositionUpdate(sdKeyId)
+				}
 				break
 			}
-			case SocketCommandActionType.AllocateRoom: {
-				const meetingId = command.data.meetingId
-				const serialNumber = this.state.getSerialNumberForMeeting(meetingId)
-				if (serialNumber !== null) {
-					const response: SocketCommand = {
+			case SocketCommandActionType.GetStreamDeckDevices:
+				ws.send(
+					JSON.stringify({
 						type: SocketCommandType.Response,
-						action: SocketCommandActionType.RoomAllocated,
-						data: {
-							...command.data,
-							serialNumber,
-						},
-					}
-					ws.send(JSON.stringify(response))
-
-					if (command.data.roomName) {
-						this.state.updateRoomName(meetingId, command.data.roomName)
-					}
-					this.state.updateMicStatus(meetingId, command.data.isMuted ?? true)
-				}
+						action: SocketCommandActionType.GetStreamDeckDevices,
+						data: [{ id: 'companion-surface', name: 'Companion Panel', size: { columns: 8, rows: 4 } }],
+					}),
+				)
 				break
-			}
-			case SocketCommandActionType.UpdateMicStatus: {
-				const meetingId = command.data.meetingId
-				if (meetingId) {
-					this.state.updateMicStatus(meetingId, command.data.isMuted)
-				}
-				break
-			}
-			case SocketCommandActionType.UpdateRoomName: {
-				const meetingId = command.data.meetingId
-				if (meetingId && command.data.roomName) {
-					this.state.updateRoomName(meetingId, command.data.roomName)
-				}
-				break
-			}
-			case SocketCommandActionType.NextoTalkRooms: {
-				if (Array.isArray(command.data.rooms)) {
-					for (const room of command.data.rooms) {
-						this.state.getSerialNumberForMeeting(room.meetingId)
-						this.state.updateRoomName(room.meetingId, room.roomName)
-						this.state.updateMicStatus(room.meetingId, room.isMuted)
-					}
-				}
-				break
-			}
-			default:
-				// Broadast to other clients if needed
-				this.sendToOtherClients(ws, command)
+			case SocketCommandActionType.GetMicControllerKeys:
+				this.streamAvailableActions(ws)
 				break
 		}
-
-		this.updateVariables()
-		this.checkFeedbacks()
 	}
 
-	private updateVariables(): void {
-		const values: Record<string, string | number | undefined> = {}
-		for (let i = 1; i <= 10; i++) {
-			const room = this.state.getRoomByNumber(i)
-			if (room) {
-				values[`room_${i}_name`] = room.name
-				values[`room_${i}_status`] = room.isMuted ? 'Muted' : 'Unmuted'
-			} else {
-				values[`room_${i}_name`] = 'None'
-				values[`room_${i}_status`] = 'N/A'
+	public onActionAppearance(action: CompanionActionInfo, isAppearing: boolean): void {
+		if (isAppearing) {
+			this.log('info', `Action Appearing - ID: ${action.id}, Control: ${action.controlId}`)
+			this.activeActions.set(action.id, action)
+			this.controlIdToActionId.set(action.controlId, action.id)
+			if (action.actionId === 'toggle_mic') this.sendActionAppear(action)
+		} else {
+			this.log('info', `Action Disappearing - ID: ${action.id}`)
+			this.activeActions.delete(action.id)
+			this.controlIdToActionId.delete(action.controlId)
+			this.lastReportedLocation.delete(action.id)
+			if (action.actionId === 'toggle_mic') this.sendActionDisappear(action)
+		}
+	}
+
+	public checkActionPositionUpdate(controlId: string): void {
+		const actionId = this.controlIdToActionId.get(controlId)
+		if (actionId) {
+			const action = this.activeActions.get(actionId)
+			if (action && action.actionId === 'toggle_mic') {
+				this.sendActionAppear(action, true) // Force update
 			}
 		}
-		this.setVariableValues(values)
 	}
 
-	public sendToOtherClients(sender: WebSocket, command: SocketCommand): void {
-		const message = JSON.stringify(command)
-		for (const client of this.clients) {
-			if (client !== sender && client.readyState === WebSocket.OPEN) {
-				client.send(message)
+	private sendActionAppear(action: CompanionActionInfo, force = false): void {
+		const coords = this.getCoordinatesFromAction(action)
+
+		// CRITICAL: Previously we were defaulting to 0,0.
+		// Now we wait for the feedback to discover the REAL coordinates.
+		if (!coords) {
+			this.log('debug', `Delaying appearance for ${action.controlId} until coordinates are discovered...`)
+			return
+		}
+
+		const locKey = `${coords.row},${coords.column}`
+
+		if (!force && this.lastReportedLocation.get(action.id) === locKey) {
+			return
+		}
+
+		this.lastReportedLocation.set(action.id, locKey)
+		this.log('info', `Reporting Action at: ${coords.row},${coords.column} for ${action.controlId}`)
+
+		this.broadcast({
+			type: SocketCommandType.Event,
+			action: SocketCommandActionType.StreamDeckKeyAppear,
+			data: {
+				id: action.id,
+				deviceId: 'companion-surface',
+				coordinates: coords,
+				settings: action.options,
+				visible: true,
+			},
+		})
+	}
+
+	private sendActionDisappear(action: CompanionActionInfo): void {
+		const coords = this.getCoordinatesFromAction(action) || { row: 0, column: 0 }
+		this.broadcast({
+			type: SocketCommandType.Event,
+			action: SocketCommandActionType.StreamDeckKeyDisappear,
+			data: {
+				id: action.id,
+				deviceId: 'companion-surface',
+				coordinates: coords,
+				settings: action.options,
+				visible: false,
+			},
+		})
+	}
+
+	private getCoordinatesFromAction(action: CompanionActionInfo): { row: number; column: number } | null {
+		const controlId = action.controlId
+		const cachedLoc = this.state.getControlLocation(controlId)
+		if (cachedLoc) return cachedLoc
+
+		const match = controlId.match(/bank:(\d+):(\d+)/)
+		if (match) {
+			const buttonNum = parseInt(match[2]) - 1
+			return { row: Math.floor(buttonNum / 8), column: buttonNum % 8 }
+		}
+
+		const sMatch = controlId.match(/surface:[^:]+:(\d+):(\d+)/)
+		if (sMatch) return { row: parseInt(sMatch[1]), column: parseInt(sMatch[2]) }
+
+		return null
+	}
+
+	private streamAvailableActions(ws: WebSocket): void {
+		this.log('info', `Streaming active actions to client...`)
+		for (const action of this.activeActions.values()) {
+			if (action.actionId === 'toggle_mic') {
+				const coords = this.getCoordinatesFromAction(action)
+				if (coords) {
+					ws.send(
+						JSON.stringify({
+							type: SocketCommandType.Event,
+							action: SocketCommandActionType.StreamDeckKeyAppear,
+							data: {
+								id: action.id,
+								deviceId: 'companion-surface',
+								coordinates: coords,
+								settings: action.options,
+								visible: true,
+							},
+						}),
+					)
+				}
 			}
 		}
 	}
 
 	public broadcast(command: SocketCommand): void {
-		const message = JSON.stringify(command)
+		const msg = JSON.stringify(command)
 		for (const client of this.clients) {
-			if (client.readyState === WebSocket.OPEN) {
-				client.send(message)
-			}
+			if (client.readyState === WebSocket.OPEN) client.send(msg)
 		}
 	}
 
-	// Return config fields for web config
 	getConfigFields(): SomeCompanionConfigField[] {
 		return GetConfigFields()
 	}
-
 	updateActions(): void {
 		UpdateActions(this)
 	}
-
 	updateFeedbacks(): void {
 		UpdateFeedbacks(this)
 	}
-
 	updatePresets(): void {
 		UpdatePresets(this)
 	}
-
 	updateVariableDefinitions(): void {
 		UpdateVariableDefinitions(this)
 	}

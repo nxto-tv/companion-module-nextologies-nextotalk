@@ -5,24 +5,31 @@ export function UpdateActions(self: ModuleInstance): void {
 	self.setActionDefinitions({
 		toggle_mic: {
 			name: 'Toggle Microphone',
-			options: [
-				{
-					id: 'roomNumber',
-					type: 'number',
-					label: 'Room Number',
-					default: 1,
-					min: 1,
-					max: 100,
-				},
-			],
+			options: [],
 			callback: async (event) => {
-				self.broadcast({
-					type: SocketCommandType.Request,
-					action: SocketCommandActionType.ToggleMic,
-					data: {
-						roomNumber: event.options.roomNumber,
-					},
-				})
+				const meetingId = self.state.getMeetingIdForAction(event.id)
+				const roomInfo = meetingId ? self.state.getRoomInfoForMeeting(meetingId) : null
+
+				if (roomInfo) {
+					self.broadcast({
+						type: SocketCommandType.Request,
+						action: SocketCommandActionType.ToggleMic,
+						data: {
+							roomNumber: roomInfo.roomNumber,
+							meetingId: meetingId,
+						},
+					})
+				} else {
+					self.log('warn', `Action ${event.id} is not mapped to any room.`)
+				}
+			},
+			subscribe: (action) => {
+				self.log('debug', `Action Subscribe: ${JSON.stringify(action)}`)
+				self.onActionAppearance(action, true)
+			},
+			unsubscribe: (action) => {
+				self.log('debug', `Action Unsubscribe: ${JSON.stringify(action)}`)
+				self.onActionAppearance(action, false)
 			},
 		},
 	})
