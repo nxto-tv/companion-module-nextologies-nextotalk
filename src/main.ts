@@ -62,7 +62,7 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 			const welcomePayload: SocketCommand = {
 				type: SocketCommandType.Event,
 				action: SocketCommandActionType.Welcome,
-				data: { version: '1.0.0.0-companion' },
+				data: { version: '1.0.0.0-companion', pluginType: 'bitfocus' },
 			}
 			ws.send(JSON.stringify(welcomePayload))
 
@@ -164,6 +164,8 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 						this.state.updateRoomName(meetingId, command.data.roomName)
 					}
 
+					this.state.setMeetingActive(meetingId, true)
+
 					command.data.serialNumber = serialNumber
 
 					// Find a suggested key if possible
@@ -234,6 +236,25 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 							type: SocketCommandType.Response,
 							action: SocketCommandActionType.UpdateRoomName,
 							data: { meetingId, roomName, success: true },
+						}),
+					)
+				}
+				break
+			}
+			case SocketCommandActionType.ReleaseKey: {
+				const { meetingId } = command.data
+				this.state.setMeetingActive(meetingId, false)
+
+				this.log('info', `Meeting set to inactive: ${meetingId}`)
+				this.checkFeedbacks('mic_status')
+
+				// Send acknowledgment response if it was a request
+				if (command.type === SocketCommandType.Request) {
+					ws.send(
+						JSON.stringify({
+							type: SocketCommandType.Response,
+							action: SocketCommandActionType.ReleaseKey,
+							data: { meetingId, success: true },
 						}),
 					)
 				}

@@ -75,12 +75,29 @@ export class ModuleState {
 		return this.actionIdMeetingIdMap[actionId] || null
 	}
 
-	public getRoomInfoForMeeting(meetingId: string): { name: string; isMuted: boolean; roomNumber: number } | null {
+	// Active meetings (connected tabs)
+	public activeMeetings: Set<string> = new Set()
+
+	public setMeetingActive(meetingId: string, isActive: boolean): void {
+		if (isActive) {
+			this.activeMeetings.add(meetingId)
+		} else {
+			this.activeMeetings.delete(meetingId)
+		}
+	}
+
+	public getRoomInfoForMeeting(meetingId: string): {
+		name: string
+		isMuted: boolean
+		roomNumber: number
+		isActive: boolean
+	} | null {
 		if (!this.meetingRoomNumberMap[meetingId]) return null
 		return {
 			name: this.meetingIdTitleMap[meetingId] || meetingId,
 			isMuted: this.meetingMicStatusMap[meetingId] ?? true,
 			roomNumber: this.meetingRoomNumberMap[meetingId],
+			isActive: this.activeMeetings.has(meetingId),
 		}
 	}
 
@@ -102,6 +119,26 @@ export class ModuleState {
 		this.meetingMicStatusMap = {}
 		this.actionIdMeetingIdMap = {}
 		this.meetingIdActionIdMap = {}
+		this.activeMeetings.clear()
 		this.controlIdToLocationMap.clear()
+	}
+
+	public removeMeeting(meetingId: string): void {
+		const actionId = this.meetingIdActionIdMap[meetingId]
+		if (actionId) {
+			delete this.actionIdMeetingIdMap[actionId]
+			delete this.meetingIdActionIdMap[meetingId]
+		} else {
+			// Fallback: Scan for any actions mapped to this meetingId and remove them
+			for (const [aId, mId] of Object.entries(this.actionIdMeetingIdMap)) {
+				if (mId === meetingId) {
+					delete this.actionIdMeetingIdMap[aId]
+				}
+			}
+		}
+		delete this.meetingRoomNumberMap[meetingId]
+		delete this.meetingIdTitleMap[meetingId]
+		delete this.meetingMicStatusMap[meetingId]
+		this.activeMeetings.delete(meetingId)
 	}
 }
