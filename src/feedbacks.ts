@@ -83,13 +83,24 @@ export function UpdateFeedbacks(self: ModuleInstance): void {
 						}
 						self.log(
 							'info',
-							`Meeting ${meetingId} (${info.name}) is active, muted=${info.isMuted}, room=${info.roomNumber}`,
+							`Meeting ${meetingId} (${info.name}) is active, muted=${info.isMuted}, busy=${info.isBusy}, speaking=${info.isSpeaking}, room=${info.roomNumber}`,
 						)
+
+						// Priority: Busy (Orange) > Speaking (Blue) > Muted (Red) > Unmuted (Green)
+						let bgcolor = info.isMuted ? combineRgb(255, 0, 0) : combineRgb(0, 200, 0)
+						const png64 = info.isMuted ? MUTE_KEY_PNG : UNMUTE_KEY_PNG
+
+						if (info.isBusy) {
+							bgcolor = combineRgb(255, 166, 0) // Orange
+						} else if (info.isSpeaking) {
+							bgcolor = combineRgb(17, 65, 211) // Blue
+						}
+
 						return {
-							bgcolor: info.isMuted ? combineRgb(255, 0, 0) : combineRgb(0, 200, 0),
+							bgcolor,
 							color: combineRgb(255, 255, 255),
 							text: info.name,
-							png64: info.isMuted ? MUTE_KEY_PNG : UNMUTE_KEY_PNG,
+							png64,
 						}
 					} else {
 						self.log('info', `No room info found for meetingId ${meetingId}`)

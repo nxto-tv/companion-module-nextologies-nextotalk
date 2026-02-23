@@ -3,6 +3,7 @@ export type SocketCommand = {
 	action: SocketCommandActionType
 	data: any
 	client?: string
+	rooms?: any[]
 }
 
 export enum SocketCommandType {

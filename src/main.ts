@@ -54,31 +54,44 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 
 	private initWebSocketServer(): void {
 		const port = this.config.port || 7005
-		this.wss = new WebSocketServer({ port })
-		this.wss.on('connection', (ws) => {
-			this.clients.add(ws)
-			this.log('info', 'Client Connected to WebSocket Server')
+		try {
+			this.wss = new WebSocketServer({ port })
+			this.updateStatus(InstanceStatus.Ok)
+			this.log('info', `WebSocket Server started on port ${port}`)
 
-			const welcomePayload: SocketCommand = {
-				type: SocketCommandType.Event,
-				action: SocketCommandActionType.Welcome,
-				data: { version: '1.0.0.0-companion', pluginType: 'bitfocus' },
-			}
-			ws.send(JSON.stringify(welcomePayload))
+			this.wss.on('connection', (ws) => {
+				this.clients.add(ws)
+				this.log('info', 'Client Connected to WebSocket Server')
 
-			ws.on('message', (message) => {
-				try {
-					const command: SocketCommand = JSON.parse((message as Buffer).toString())
-					this.handleMessage(ws, command)
-				} catch (e) {
-					this.log('error', `WS Parse Error: ${e}`)
+				const welcomePayload: SocketCommand = {
+					type: SocketCommandType.Event,
+					action: SocketCommandActionType.Welcome,
+					data: { version: '1.0.0.0-companion', pluginType: 'bitfocus' },
 				}
+				ws.send(JSON.stringify(welcomePayload))
+
+				ws.on('message', (message) => {
+					try {
+						const command: SocketCommand = JSON.parse((message as Buffer).toString())
+						this.handleMessage(ws, command)
+					} catch (e) {
+						this.log('error', `WS Parse Error: ${e}`)
+					}
+				})
+				ws.on('close', () => {
+					this.clients.delete(ws)
+					this.log('info', 'Client Disconnected')
+				})
 			})
-			ws.on('close', () => {
-				this.clients.delete(ws)
-				this.log('info', 'Client Disconnected')
+
+			this.wss.on('error', (err) => {
+				this.log('error', `WebSocket Server Error: ${err.message}`)
+				this.updateStatus(InstanceStatus.ConnectionFailure, `WS Error: ${err.message}`)
 			})
-		})
+		} catch (e: any) {
+			this.log('error', `Failed to start WebSocket Server: ${e.message}`)
+			this.updateStatus(InstanceStatus.ConnectionFailure, `Port ${port} in use?`)
+		}
 	}
 
 	private handleMessage(ws: WebSocket, command: SocketCommand): void {
@@ -111,6 +124,53 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 					this.state.setControlLocation(sdKeyId, coordinates.row, coordinates.column)
 					this.checkActionPositionUpdate(sdKeyId)
 				}
+				break
+			}
+			case SocketCommandActionType.MapMeetingRoomToKey: {
+				const { sdKeyId, roomNumber, roomName, silentMap, isMuted, isBusy, isParticipantSpeaking } = command.data
+				let meetingId = command.data.meetingId
+
+				if (meetingId !== undefined && meetingId !== null) {
+					meetingId = String(meetingId)
+				}
+
+				// Assignment is handled by mapActionToMeeting
+				this.state.mapActionToMeeting(sdKeyId, meetingId)
+
+				if (silentMap) {
+					break
+				}
+
+				this.log('info', `Mapping meeting ${meetingId} to action ${sdKeyId}`)
+
+				if (roomNumber !== undefined && roomNumber !== null && Number(roomNumber) > 0) {
+					this.state.meetingRoomNumberMap[meetingId] = Number(roomNumber)
+				} else {
+					this.state.getSerialNumberForMeeting(meetingId)
+				}
+
+				this.state.setMeetingActive(meetingId, true)
+
+				// Update memory state
+				this.state.updateMicStatus(
+					meetingId,
+					isMuted ?? this.state.meetingMicStatusMap[meetingId] ?? true,
+					isBusy ?? this.state.meetingBusyStatusMap[meetingId] ?? false,
+					isParticipantSpeaking ?? this.state.meetingSpeakingStatusMap[meetingId] ?? false,
+				)
+
+				const meetingTitle = (roomName ?? meetingId) as string
+				if (meetingTitle) {
+					this.state.updateRoomName(meetingId, this.lineBreakedMeetingTitle(meetingTitle))
+				}
+
+				this.log(
+					'debug',
+					`State after mapping: roomNumber=${this.state.meetingRoomNumberMap[meetingId]}, name=${this.state.meetingIdTitleMap[meetingId]}`,
+				)
+
+				this.notifyServerAboutSettingsChange(sdKeyId, meetingId)
+				this.checkFeedbacks('mic_status')
 				break
 			}
 			case SocketCommandActionType.GetStreamDeckDevices:
@@ -218,9 +278,31 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 				break
 			}
 			case SocketCommandActionType.UpdateMicStatus: {
-				const { meetingId, isMuted } = command.data
-				this.state.updateMicStatus(meetingId, isMuted)
+				const { meetingId, isMuted, isBusy, isParticipantSpeaking } = command.data
+				this.state.updateMicStatus(meetingId, isMuted, isBusy, isParticipantSpeaking)
 				this.checkFeedbacks('mic_status')
+				break
+			}
+			case SocketCommandActionType.ParticipantAudioMuted:
+			case SocketCommandActionType.ParticipantAudioUnmuted:
+			case SocketCommandActionType.ParticipantBusyStatus: {
+				const { meetingId, isMuted, isBusy, isParticipantSpeaking } = command.data
+				this.state.updateMicStatus(meetingId, isMuted, isBusy, isParticipantSpeaking)
+				this.checkFeedbacks('mic_status')
+				break
+			}
+			case SocketCommandActionType.NextoTalkRooms: {
+				if (Array.isArray(command.rooms)) {
+					for (const room of command.rooms) {
+						if (room.meetingId) {
+							this.state.getSerialNumberForMeeting(room.meetingId)
+							if (room.roomName) this.state.updateRoomName(room.meetingId, room.roomName)
+							this.state.setMeetingActive(room.meetingId, true)
+							this.state.updateMicStatus(room.meetingId, room.isMuted, room.isBusy, room.isParticipantSpeaking)
+						}
+					}
+					this.checkFeedbacks('mic_status')
+				}
 				break
 			}
 			case SocketCommandActionType.UpdateRoomName: {
@@ -412,6 +494,39 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 			coordinates: pickedCoords,
 			visible: true,
 		}
+	}
+
+	private lineBreakedMeetingTitle(title: string): string {
+		if (!title) return ''
+		const words = title.split(' ')
+		if (words.length <= 1) return title
+
+		const mid = Math.ceil(words.length / 2)
+		return words.slice(0, mid).join(' ') + '\n' + words.slice(mid).join(' ')
+	}
+
+	private notifyServerAboutSettingsChange(sdKeyId: string, meetingId: string): void {
+		const info = this.state.getRoomInfoForMeeting(meetingId)
+		if (!info) return
+
+		const settings = {
+			isEnabled: true,
+			isMuted: info.isMuted,
+			meetingId: meetingId,
+			roomNumber: info.roomNumber,
+			isUserBusy: info.isBusy,
+			isParticipantSpeaking: info.isSpeaking,
+			title: info.name,
+		}
+
+		this.broadcast({
+			type: SocketCommandType.Event,
+			action: SocketCommandActionType.ActionUpdated,
+			data: {
+				sdkey: sdKeyId,
+				settings: settings,
+			},
+		})
 	}
 
 	public broadcast(command: SocketCommand): void {
