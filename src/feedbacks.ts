@@ -83,7 +83,7 @@ export function UpdateFeedbacks(self: ModuleInstance): void {
 						}
 						self.log(
 							'info',
-							`Meeting ${meetingId} (${info.name}) is active, muted=${info.isMuted}, busy=${info.isBusy}, speaking=${info.isSpeaking}, room=${info.roomNumber}`,
+							`FEEDBACK STATUS [${meetingId}]: Muted=${info.isMuted} (${info.isMuted ? 'RED' : 'GREEN'}), Busy=${info.isBusy}, Speaking=${info.isSpeaking}, Active=${info.isActive}`,
 						)
 
 						// Priority: Busy (Orange) > Speaking (Blue) > Muted (Red) > Unmuted (Green)
@@ -103,11 +103,12 @@ export function UpdateFeedbacks(self: ModuleInstance): void {
 							png64,
 						}
 					} else {
-						self.log('info', `No room info found for meetingId ${meetingId}`)
+						const allAllocated = Object.keys(self.state.meetingRoomNumberMap).join(', ')
+						self.log('warn', `No room info found for meetingId [${meetingId}]. Available: ${allAllocated}`)
 					}
 				}
 
-				self.log('info', `Returning default empty feedback for controlId ${feedback.controlId}`)
+				self.log('debug', `Returning default feedback for controlId ${feedback.controlId}`)
 				return {
 					bgcolor: combineRgb(0, 0, 0),
 					color: combineRgb(100, 100, 100),

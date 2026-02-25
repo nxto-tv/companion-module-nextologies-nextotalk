@@ -33,32 +33,30 @@ export class ModuleState {
 
 	private maximumMeetingsAllowed = 100
 
-	public getSerialNumberForMeeting(meetingId: unknown): number | null {
-		const mId = typeof meetingId === 'string' || typeof meetingId === 'number' ? String(meetingId) : ''
-		if (!mId) return null
-
-		const existingSerialNumber = this.meetingRoomNumberMap[mId]
+	public getSerialNumberForMeeting(meetingIdRaw: string | number): number | null {
+		const meetingId = String(meetingIdRaw)
+		const existingSerialNumber = this.meetingRoomNumberMap[meetingId]
 		if (existingSerialNumber) return existingSerialNumber
 
 		const nextSerialNumber = Object.values(this.meetingRoomNumberMap).length + 1
 		if (nextSerialNumber <= this.maximumMeetingsAllowed) {
-			this.meetingRoomNumberMap[mId] = nextSerialNumber
+			this.meetingRoomNumberMap[meetingId] = nextSerialNumber
 			return nextSerialNumber
 		}
 		return null
 	}
 
-	public mapActionToMeeting(actionId: string, meetingId: unknown): void {
-		const mId = typeof meetingId === 'string' || typeof meetingId === 'number' ? String(meetingId) : null
-		if (mId) {
+	public mapActionToMeeting(actionId: string, meetingIdRaw: string | number | null): void {
+		if (meetingIdRaw !== null && meetingIdRaw !== undefined) {
+			const meetingId = String(meetingIdRaw)
 			// Clear existing mapping for this meeting if it exists elsewhere
-			const oldActionId = this.meetingIdActionIdMap[mId]
+			const oldActionId = this.meetingIdActionIdMap[meetingId]
 			if (oldActionId) {
 				delete this.actionIdMeetingIdMap[oldActionId]
 			}
 
-			this.actionIdMeetingIdMap[actionId] = mId
-			this.meetingIdActionIdMap[mId] = actionId
+			this.actionIdMeetingIdMap[actionId] = meetingId
+			this.meetingIdActionIdMap[meetingId] = actionId
 		} else {
 			// Unmap
 			const oldMeetingId = this.actionIdMeetingIdMap[actionId]
@@ -69,18 +67,21 @@ export class ModuleState {
 		}
 	}
 
-	public updateRoomName(meetingId: unknown, name: string): void {
-		const mId = typeof meetingId === 'string' || typeof meetingId === 'number' ? String(meetingId) : ''
-		if (!mId) return
-		this.meetingIdTitleMap[mId] = name
+	public updateRoomName(meetingIdRaw: string | number, name: string): void {
+		const meetingId = String(meetingIdRaw)
+		this.meetingIdTitleMap[meetingId] = name
 	}
 
-	public updateMicStatus(meetingId: unknown, isMuted: boolean, isBusy?: boolean, isSpeaking?: boolean): void {
-		const mId = typeof meetingId === 'string' || typeof meetingId === 'number' ? String(meetingId) : ''
-		if (!mId) return
-		this.meetingMicStatusMap[mId] = isMuted
-		if (isBusy !== undefined) this.meetingBusyStatusMap[mId] = isBusy
-		if (isSpeaking !== undefined) this.meetingSpeakingStatusMap[mId] = isSpeaking
+	public updateMicStatus(
+		meetingIdRaw: string | number,
+		isMuted: boolean,
+		isBusy?: boolean,
+		isSpeaking?: boolean,
+	): void {
+		const meetingId = String(meetingIdRaw)
+		this.meetingMicStatusMap[meetingId] = isMuted
+		if (isBusy !== undefined) this.meetingBusyStatusMap[meetingId] = isBusy
+		if (isSpeaking !== undefined) this.meetingSpeakingStatusMap[meetingId] = isSpeaking
 	}
 
 	public getMeetingIdForAction(actionId: string): string | null {
@@ -91,7 +92,8 @@ export class ModuleState {
 	// Active meetings (connected tabs)
 	public activeMeetings: Set<string> = new Set()
 
-	public setMeetingActive(meetingId: string, isActive: boolean): void {
+	public setMeetingActive(meetingIdRaw: string | number, isActive: boolean): void {
+		const meetingId = String(meetingIdRaw)
 		if (isActive) {
 			this.activeMeetings.add(meetingId)
 		} else {
@@ -99,7 +101,7 @@ export class ModuleState {
 		}
 	}
 
-	public getRoomInfoForMeeting(meetingId: unknown): {
+	public getRoomInfoForMeeting(meetingIdRaw: string | number): {
 		name: string
 		isMuted: boolean
 		isBusy: boolean
@@ -107,19 +109,18 @@ export class ModuleState {
 		roomNumber: number
 		isActive: boolean
 	} | null {
-		const mId = typeof meetingId === 'string' || typeof meetingId === 'number' ? String(meetingId) : ''
-		if (!mId) return null
-
-		const roomNumber = this.meetingRoomNumberMap[mId]
-		if (roomNumber === undefined || roomNumber === null) return null
+		const meetingId = String(meetingIdRaw)
+		// Try to find ANY info that this meeting exists
+		const roomNumber = this.meetingRoomNumberMap[meetingId]
+		if (roomNumber === undefined) return null
 
 		return {
-			name: this.meetingIdTitleMap[mId] || mId,
-			isMuted: this.meetingMicStatusMap[mId] ?? true,
-			isBusy: this.meetingBusyStatusMap[mId] ?? false,
-			isSpeaking: this.meetingSpeakingStatusMap[mId] ?? false,
+			name: this.meetingIdTitleMap[meetingId] || meetingId,
+			isMuted: this.meetingMicStatusMap[meetingId] ?? true,
+			isBusy: this.meetingBusyStatusMap[meetingId] ?? false,
+			isSpeaking: this.meetingSpeakingStatusMap[meetingId] ?? false,
 			roomNumber: roomNumber,
-			isActive: this.activeMeetings.has(mId),
+			isActive: this.activeMeetings.has(meetingId),
 		}
 	}
 

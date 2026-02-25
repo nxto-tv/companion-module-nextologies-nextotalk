@@ -15,6 +15,12 @@ import { WebSocketServer, WebSocket } from 'ws'
 import { SocketCommandActionType, SocketCommandType, type SocketCommand } from './command.js'
 import { ModuleState } from './state.js'
 
+function toBool(val: any): boolean {
+	if (typeof val === 'boolean') return val
+	if (val === 'true' || val === 1 || val === '1') return true
+	return false
+}
+
 export class ModuleInstance extends InstanceBase<ModuleConfig> {
 	config!: ModuleConfig
 	private wss: WebSocketServer | undefined
@@ -118,7 +124,13 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 				}
 				break
 			case SocketCommandActionType.MapSDKeyToRoom: {
-				const { sdKeyId, meetingId, coordinates } = command.data
+				let meetingId = command.data.meetingId
+				if (meetingId !== undefined && meetingId !== null) {
+					meetingId = String(meetingId)
+				}
+				const sdKeyId = command.data.sdKeyId
+				const coordinates = command.data.coordinates
+
 				if (meetingId !== undefined) this.state.mapActionToMeeting(sdKeyId, meetingId)
 				if (coordinates) {
 					this.state.setControlLocation(sdKeyId, coordinates.row, coordinates.column)
@@ -154,9 +166,11 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 				// Update memory state
 				this.state.updateMicStatus(
 					meetingId,
-					isMuted ?? this.state.meetingMicStatusMap[meetingId] ?? true,
-					isBusy ?? this.state.meetingBusyStatusMap[meetingId] ?? false,
-					isParticipantSpeaking ?? this.state.meetingSpeakingStatusMap[meetingId] ?? false,
+					isMuted !== undefined ? toBool(isMuted) : (this.state.meetingMicStatusMap[meetingId] ?? true),
+					isBusy !== undefined ? toBool(isBusy) : (this.state.meetingBusyStatusMap[meetingId] ?? false),
+					isParticipantSpeaking !== undefined
+						? toBool(isParticipantSpeaking)
+						: (this.state.meetingSpeakingStatusMap[meetingId] ?? false),
 				)
 
 				const meetingTitle = (roomName ?? meetingId) as string
@@ -215,7 +229,11 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 				break
 			}
 			case SocketCommandActionType.AllocateRoom: {
-				const meetingId = command.data.meetingId
+				let meetingId = command.data.meetingId
+				if (meetingId !== undefined && meetingId !== null) {
+					meetingId = String(meetingId)
+				}
+
 				const serialNumber = this.state.getSerialNumberForMeeting(meetingId)
 
 				if (serialNumber !== null) {
@@ -225,6 +243,16 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 					}
 
 					this.state.setMeetingActive(meetingId, true)
+
+					// Update initial status if provided
+					if (command.data.isMuted !== undefined) {
+						this.state.updateMicStatus(
+							meetingId,
+							toBool(command.data.isMuted),
+							toBool(command.data.isBusy),
+							toBool(command.data.isParticipantSpeaking),
+						)
+					}
 
 					command.data.serialNumber = serialNumber
 
@@ -278,27 +306,51 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 				break
 			}
 			case SocketCommandActionType.UpdateMicStatus: {
-				const { meetingId, isMuted, isBusy, isParticipantSpeaking } = command.data
-				this.state.updateMicStatus(meetingId, isMuted, isBusy, isParticipantSpeaking)
+				let meetingId = command.data.meetingId
+				if (meetingId !== undefined && meetingId !== null) {
+					meetingId = String(meetingId)
+				}
+				const { isMuted, isBusy, isParticipantSpeaking } = command.data
+				this.log(
+					'info',
+					`UpdateMicStatus for ${meetingId}: muted=${isMuted}, busy=${isBusy}, speaking=${isParticipantSpeaking}`,
+				)
+				this.state.updateMicStatus(meetingId, toBool(isMuted), toBool(isBusy), toBool(isParticipantSpeaking))
 				this.checkFeedbacks('mic_status')
 				break
 			}
 			case SocketCommandActionType.ParticipantAudioMuted:
 			case SocketCommandActionType.ParticipantAudioUnmuted:
 			case SocketCommandActionType.ParticipantBusyStatus: {
-				const { meetingId, isMuted, isBusy, isParticipantSpeaking } = command.data
-				this.state.updateMicStatus(meetingId, isMuted, isBusy, isParticipantSpeaking)
+				let meetingId = command.data.meetingId
+				if (meetingId !== undefined && meetingId !== null) {
+					meetingId = String(meetingId)
+				}
+				const { isMuted, isBusy, isParticipantSpeaking } = command.data
+				this.log(
+					'info',
+					`Participant Status Event for ${meetingId}: muted=${isMuted}, busy=${isBusy}, speaking=${isParticipantSpeaking}`,
+				)
+				this.state.updateMicStatus(meetingId, toBool(isMuted), toBool(isBusy), toBool(isParticipantSpeaking))
 				this.checkFeedbacks('mic_status')
 				break
 			}
 			case SocketCommandActionType.NextoTalkRooms: {
 				if (Array.isArray(command.rooms)) {
 					for (const room of command.rooms) {
-						if (room.meetingId) {
-							this.state.getSerialNumberForMeeting(room.meetingId)
-							if (room.roomName) this.state.updateRoomName(room.meetingId, room.roomName)
-							this.state.setMeetingActive(room.meetingId, true)
-							this.state.updateMicStatus(room.meetingId, room.isMuted, room.isBusy, room.isParticipantSpeaking)
+						let meetingId = room.meetingId
+						if (meetingId !== undefined && meetingId !== null) {
+							meetingId = String(meetingId)
+						}
+
+						if (meetingId) {
+							this.state.setMeetingActive(meetingId, true)
+							this.state.updateMicStatus(
+								meetingId,
+								toBool(room.isMuted),
+								toBool(room.isBusy),
+								toBool(room.isParticipantSpeaking),
+							)
 						}
 					}
 					this.checkFeedbacks('mic_status')
@@ -306,7 +358,11 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 				break
 			}
 			case SocketCommandActionType.UpdateRoomName: {
-				const { meetingId, roomName } = command.data
+				let meetingId = command.data.meetingId
+				if (meetingId !== undefined && meetingId !== null) {
+					meetingId = String(meetingId)
+				}
+				const { roomName } = command.data
 				this.state.updateRoomName(meetingId, roomName)
 				this.log('info', `Updated room name for ${meetingId}: ${roomName}`)
 				this.checkFeedbacks('mic_status')
@@ -324,7 +380,10 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 				break
 			}
 			case SocketCommandActionType.ReleaseKey: {
-				const { meetingId } = command.data
+				let meetingId = command.data.meetingId
+				if (meetingId !== undefined && meetingId !== null) {
+					meetingId = String(meetingId)
+				}
 				this.state.setMeetingActive(meetingId, false)
 
 				this.log('info', `Meeting set to inactive: ${meetingId}`)

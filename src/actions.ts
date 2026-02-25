@@ -10,7 +10,13 @@ export function UpdateActions(self: ModuleInstance): void {
 				const meetingId = self.state.getMeetingIdForAction(event.id)
 				const roomInfo = meetingId ? self.state.getRoomInfoForMeeting(meetingId) : null
 
-				if (roomInfo) {
+				if (meetingId && roomInfo) {
+					// Optimistically toggle the local status first for instant feedback
+					const newMutedState = !roomInfo.isMuted
+					self.state.updateMicStatus(meetingId, newMutedState)
+					self.checkFeedbacks('mic_status')
+
+					self.log('info', `Toggling mic for ${meetingId} (New state: ${newMutedState ? 'Muted' : 'Unmuted'})`)
 					self.broadcast({
 						type: SocketCommandType.Request,
 						action: SocketCommandActionType.ToggleMic,
