@@ -21,27 +21,7 @@ export function UpdateFeedbacks(self: ModuleInstance): void {
 			callback: async (feedback, context) => {
 				self.log('info', `Feedback callback triggered for controlId: ${feedback.controlId}`)
 				// 1. DYNAMIC COORDINATE DISCOVERY (The "Top Bar" Grabber)
-				try {
-					// We ask Companion to resolve $(this:row/column) for this specific button instance
-					const rowStr = await context.parseVariablesInString('$(this:row)')
-					const colStr = await context.parseVariablesInString('$(this:column)')
-
-					const dRow = parseInt(rowStr)
-					const dCol = parseInt(colStr)
-
-					if (!isNaN(dRow) && !isNaN(dCol)) {
-						const current = self.state.getControlLocation(feedback.controlId)
-						if (!current || current.row !== dRow || current.column !== dCol) {
-							self.log('info', `Coordinate discovered for ${feedback.controlId}: row=${dRow}, col=${dCol}`)
-							self.state.setControlLocation(feedback.controlId, dRow, dCol)
-							self.checkActionPositionUpdate(feedback.controlId)
-						}
-					} else {
-						self.log('info', `Invalid coordinates parsed for ${feedback.controlId}: row=${rowStr}, col=${colStr}`)
-					}
-				} catch (e) {
-					self.log('info', `Coordinate discovery failed for ${feedback.controlId}: ${e}`)
-				}
+				await self.discoverActionCoordinates(feedback.controlId, context)
 
 				// 2. STATUS RENDERING
 				const roomNumberSetting = Number(feedback.options.roomNumber)

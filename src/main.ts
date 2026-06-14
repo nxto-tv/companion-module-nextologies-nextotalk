@@ -157,8 +157,6 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 
 				if (roomNumber !== undefined && roomNumber !== null && Number(roomNumber) > 0) {
 					this.state.meetingRoomNumberMap[meetingId] = Number(roomNumber)
-				} else {
-					this.state.getSerialNumberForMeeting(meetingId)
 				}
 
 				this.state.setMeetingActive(meetingId, true)
@@ -228,81 +226,26 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 				this.log('info', `Sent persisted room metadata for ${Object.keys(roomMetaMap).length} meetings`)
 				break
 			}
-			case SocketCommandActionType.AllocateRoom: {
-				let meetingId = command.data.meetingId
-				if (meetingId !== undefined && meetingId !== null) {
-					meetingId = String(meetingId)
+			case SocketCommandActionType.RoomAllocated: {
+				// The central brain (Chrome Extension) just told us a room was allocated.
+				// We just need to ensure our local state is updated to reflect this.
+				const data = command.data
+				const meetingId = String(data.meetingId)
+
+				this.state.meetingRoomNumberMap[meetingId] = data.serialNumber
+				if (data.roomName) {
+					this.state.updateRoomName(meetingId, this.lineBreakedMeetingTitle(data.roomName))
 				}
 
-				const serialNumber = this.state.getSerialNumberForMeeting(meetingId)
-
-				if (serialNumber !== null) {
-					// Store room name if provided in the allocation request
-					if (command.data.roomName) {
-						this.state.updateRoomName(meetingId, command.data.roomName)
-					}
-
-					this.state.setMeetingActive(meetingId, true)
-
-					// Update initial status if provided
-					if (command.data.isMuted !== undefined) {
-						this.state.updateMicStatus(
-							meetingId,
-							toBool(command.data.isMuted),
-							toBool(command.data.isBusy),
-							toBool(command.data.isParticipantSpeaking),
-						)
-					}
-
-					command.data.serialNumber = serialNumber
-
-					// Find a suggested key if possible
-					let suggestedSDKey: any = null
-					const cachedActionId = this.state.meetingIdActionIdMap[meetingId]
-
-					if (cachedActionId) {
-						this.log('debug', `Found cached action ${cachedActionId} for meeting ${meetingId}`)
-						const action = this.activeActions.get(cachedActionId)
-						if (action) {
-							suggestedSDKey = {
-								id: action.id,
-								coordinates: this.getCoordinatesFromAction(action),
-								visible: true,
-							}
-							this.log('debug', `Using cached action as suggested key`)
-						} else {
-							this.log('warn', `Cached action ${cachedActionId} not found in activeActions`)
-						}
-					} else {
-						this.log('debug', `No cached action for meeting ${meetingId}, searching for free button...`)
-						// No previous mapping, find a free visible button
-						suggestedSDKey = this.findNonAllocatedVisibleAction()
-						if (suggestedSDKey) {
-							this.log('info', `Found free button ${suggestedSDKey.id} for meeting ${meetingId}`)
-							this.state.mapActionToMeeting(suggestedSDKey.id, meetingId)
-						} else {
-							this.log('warn', `No free buttons available for meeting ${meetingId}`)
-						}
-					}
-
-					if (suggestedSDKey) {
-						command.data.suggestedSDKey = suggestedSDKey
-						this.log('debug', `Including suggestedSDKey in response: ${JSON.stringify(suggestedSDKey)}`)
-					} else {
-						this.log('warn', `No suggestedSDKey available for meeting ${meetingId}`)
-					}
-
-					ws.send(
-						JSON.stringify({
-							type: SocketCommandType.Response,
-							action: SocketCommandActionType.RoomAllocated,
-							data: command.data,
-						}),
-					)
-
-					this.log('info', `Allocated Room ${serialNumber} for Meeting ${meetingId}`)
-					this.checkFeedbacks('mic_status') // Refresh feedback for UI
+				if (data.suggestedSDKey) {
+					this.state.mapActionToMeeting(data.suggestedSDKey.id, meetingId)
 				}
+
+				this.state.setMeetingActive(meetingId, true)
+				this.checkFeedbacks('mic_status')
+
+				// Broadcast this allocation to other potential clients (like the Dashboard)
+				this.broadcast(command)
 				break
 			}
 			case SocketCommandActionType.UpdateMicStatus: {
@@ -310,12 +253,24 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 				if (meetingId !== undefined && meetingId !== null) {
 					meetingId = String(meetingId)
 				}
-				const { isMuted, isBusy, isParticipantSpeaking } = command.data
-				this.log(
-					'info',
-					`UpdateMicStatus for ${meetingId}: muted=${isMuted}, busy=${isBusy}, speaking=${isParticipantSpeaking}`,
-				)
-				this.state.updateMicStatus(meetingId, toBool(isMuted), toBool(isBusy), toBool(isParticipantSpeaking))
+				const { isMuted, isBusy, isParticipantSpeaking, roomName } = command.data
+
+				if (roomName) {
+					this.state.updateRoomName(meetingId, this.lineBreakedMeetingTitle(roomName))
+				}
+
+				if (isMuted === undefined) {
+					// No mic info available (e.g. the browser tab/meeting was closed) -
+					// treat the key as neutral/inactive instead of defaulting to "unmuted" (green).
+					this.log('info', `UpdateMicStatus for ${meetingId}: isMuted undefined -> marking inactive (neutral)`)
+					this.state.setMeetingActive(meetingId, false)
+				} else {
+					this.log(
+						'info',
+						`UpdateMicStatus for ${meetingId}: muted=${isMuted}, busy=${isBusy}, speaking=${isParticipantSpeaking}`,
+					)
+					this.state.updateMicStatus(meetingId, toBool(isMuted), toBool(isBusy), toBool(isParticipantSpeaking))
+				}
 				this.checkFeedbacks('mic_status')
 				break
 			}
@@ -419,6 +374,33 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 		}
 	}
 
+	public async discoverActionCoordinates(
+		controlId: string,
+		context: { parseVariablesInString(text: string): Promise<string> },
+	): Promise<void> {
+		try {
+			// We ask Companion to resolve $(this:row/column) for this specific button instance
+			const rowStr = await context.parseVariablesInString('$(this:row)')
+			const colStr = await context.parseVariablesInString('$(this:column)')
+
+			const dRow = parseInt(rowStr)
+			const dCol = parseInt(colStr)
+
+			if (!isNaN(dRow) && !isNaN(dCol)) {
+				const current = this.state.getControlLocation(controlId)
+				if (!current || current.row !== dRow || current.column !== dCol) {
+					this.log('info', `Coordinate discovered for ${controlId}: row=${dRow}, col=${dCol}`)
+					this.state.setControlLocation(controlId, dRow, dCol)
+					this.checkActionPositionUpdate(controlId)
+				}
+			} else {
+				this.log('info', `Invalid coordinates parsed for ${controlId}: row=${rowStr}, col=${colStr}`)
+			}
+		} catch (e) {
+			this.log('info', `Coordinate discovery failed for ${controlId}: ${e}`)
+		}
+	}
+
 	public checkActionPositionUpdate(controlId: string): void {
 		const actionId = this.controlIdToActionId.get(controlId)
 		if (actionId) {
@@ -514,44 +496,6 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 					)
 				}
 			}
-		}
-	}
-
-	private findNonAllocatedVisibleAction(): any | null {
-		// Visible actions for us are all toggle_mic actions that are currently "appearing"
-		const visibleActions = Array.from(this.activeActions.values()).filter((action) => action.actionId === 'toggle_mic')
-
-		if (visibleActions.length === 0) return null
-
-		const allocatedActionIds = new Set(Object.values(this.state.meetingIdActionIdMap))
-
-		const nonAllocatedVisibleActions = visibleActions.filter((action) => !allocatedActionIds.has(action.id))
-
-		if (nonAllocatedVisibleActions.length === 0) return null
-
-		if (nonAllocatedVisibleActions.length > 1) {
-			nonAllocatedVisibleActions.sort((a, b) => {
-				const c1 = this.getCoordinatesFromAction(a) || { row: 0, column: 0 }
-				const c2 = this.getCoordinatesFromAction(b) || { row: 0, column: 0 }
-				if (c1.row !== c2.row) return c1.row - c2.row
-				return c1.column - c2.column
-			})
-		}
-
-		const picked = nonAllocatedVisibleActions[0]
-		const pickedCoords = this.getCoordinatesFromAction(picked)
-
-		if (!pickedCoords) {
-			this.log('warn', `Could not get coordinates for action ${picked.id}, controlId: ${picked.controlId}`)
-			return null
-		}
-
-		this.log('debug', `Suggesting free action ${picked.id} at row:${pickedCoords.row}, col:${pickedCoords.column}`)
-
-		return {
-			id: picked.id,
-			coordinates: pickedCoords,
-			visible: true,
 		}
 	}
 

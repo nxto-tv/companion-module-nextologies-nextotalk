@@ -29,8 +29,12 @@ export function UpdateActions(self: ModuleInstance): void {
 					self.log('warn', `Action ${event.id} is not mapped to any room.`)
 				}
 			},
-			subscribe: (action) => {
+			subscribe: async (action, context) => {
 				self.log('debug', `Action Subscribe: ${JSON.stringify(action)}`)
+				// Discover coordinates immediately so sd_key_appear can be broadcast
+				// without waiting for the feedback callback to run (which only happens
+				// while the button is being rendered somewhere).
+				await self.discoverActionCoordinates(action.controlId, context)
 				self.onActionAppearance(action, true)
 			},
 			unsubscribe: (action) => {

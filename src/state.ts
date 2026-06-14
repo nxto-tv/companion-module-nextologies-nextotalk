@@ -31,21 +31,6 @@ export class ModuleState {
 		return this.controlIdToLocationMap.get(controlId) || null
 	}
 
-	private maximumMeetingsAllowed = 100
-
-	public getSerialNumberForMeeting(meetingIdRaw: string | number): number | null {
-		const meetingId = String(meetingIdRaw)
-		const existingSerialNumber = this.meetingRoomNumberMap[meetingId]
-		if (existingSerialNumber) return existingSerialNumber
-
-		const nextSerialNumber = Object.values(this.meetingRoomNumberMap).length + 1
-		if (nextSerialNumber <= this.maximumMeetingsAllowed) {
-			this.meetingRoomNumberMap[meetingId] = nextSerialNumber
-			return nextSerialNumber
-		}
-		return null
-	}
-
 	public mapActionToMeeting(actionId: string, meetingIdRaw: string | number | null): void {
 		if (meetingIdRaw !== null && meetingIdRaw !== undefined) {
 			const meetingId = String(meetingIdRaw)
