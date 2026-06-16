@@ -17,7 +17,7 @@ import { ModuleState } from './state.js'
 
 // Bump on every build so you can confirm the running module matches your build.
 // Keep in sync with package.json / companion/manifest.json.
-const MODULE_VERSION = '0.2.0'
+const MODULE_VERSION = '0.3.0'
 
 function toBool(val: any): boolean {
 	if (typeof val === 'boolean') return val
@@ -258,7 +258,15 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 				if (meetingId !== undefined && meetingId !== null) {
 					meetingId = String(meetingId)
 				}
-				const { isMuted, isBusy, isParticipantSpeaking, roomName } = command.data
+				const { isMuted, isBusy, isParticipantSpeaking, roomName, sdKeyId } = command.data
+
+				// Establish the action↔meeting mapping from the live status itself. The extension
+				// includes the sdKeyId (= our action id) with every update_mic_status, so the surface
+				// learns/refreshes which button drives which room — no auto-allocation needed, and it
+				// self-heals after a Companion restart (the app keeps streaming status).
+				if (sdKeyId && meetingId) {
+					this.state.mapActionToMeeting(sdKeyId, meetingId)
+				}
 
 				if (roomName) {
 					this.state.updateRoomName(meetingId, this.lineBreakedMeetingTitle(roomName))
