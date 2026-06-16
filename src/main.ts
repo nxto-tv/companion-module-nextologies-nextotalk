@@ -15,6 +15,10 @@ import { WebSocketServer, WebSocket } from 'ws'
 import { SocketCommandActionType, SocketCommandType, type SocketCommand } from './command.js'
 import { ModuleState } from './state.js'
 
+// Bump on every build so you can confirm the running module matches your build.
+// Keep in sync with package.json / companion/manifest.json.
+const MODULE_VERSION = '0.2.0'
+
 function toBool(val: any): boolean {
 	if (typeof val === 'boolean') return val
 	if (val === 'true' || val === 1 || val === '1') return true
@@ -35,14 +39,15 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 	}
 
 	async init(config: ModuleConfig): Promise<void> {
-		this.log('info', 'Initializing Nextotalk Module')
+		this.log('info', `Initializing Nextotalk Module v${MODULE_VERSION}`)
 		this.config = config
-		this.updateStatus(InstanceStatus.Ok)
+		this.updateStatus(InstanceStatus.Ok, `v${MODULE_VERSION}`)
 		this.initWebSocketServer()
 		this.updateActions()
 		this.updateFeedbacks()
 		this.updatePresets()
 		this.updateVariableDefinitions()
+		this.setVariableValues({ module_version: MODULE_VERSION })
 	}
 
 	async destroy(): Promise<void> {
@@ -62,7 +67,7 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 		const port = this.config.port || 7005
 		try {
 			this.wss = new WebSocketServer({ port })
-			this.updateStatus(InstanceStatus.Ok)
+			this.updateStatus(InstanceStatus.Ok, `v${MODULE_VERSION} · :${port}`)
 			this.log('info', `WebSocket Server started on port ${port}`)
 
 			this.wss.on('connection', (ws) => {
