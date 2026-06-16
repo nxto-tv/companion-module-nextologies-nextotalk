@@ -95,16 +95,20 @@ export class ModuleState {
 		isActive: boolean
 	} | null {
 		const meetingId = String(meetingIdRaw)
-		// Try to find ANY info that this meeting exists
+		// A room is "known" if it is mapped to a key, has a title, or has a room number.
+		// Do NOT gate on roomNumber — the NextoTalk app maps PL rooms with roomNumber 0, and a
+		// mapped room must still render its name (the room number is optional metadata).
 		const roomNumber = this.meetingRoomNumberMap[meetingId]
-		if (roomNumber === undefined) return null
+		const hasTitle = this.meetingIdTitleMap[meetingId] !== undefined
+		const isMapped = this.meetingIdActionIdMap[meetingId] !== undefined
+		if (roomNumber === undefined && !hasTitle && !isMapped) return null
 
 		return {
 			name: this.meetingIdTitleMap[meetingId] || meetingId,
 			isMuted: this.meetingMicStatusMap[meetingId] ?? true,
 			isBusy: this.meetingBusyStatusMap[meetingId] ?? false,
 			isSpeaking: this.meetingSpeakingStatusMap[meetingId] ?? false,
-			roomNumber: roomNumber,
+			roomNumber: roomNumber ?? 0,
 			isActive: this.activeMeetings.has(meetingId),
 		}
 	}

@@ -269,6 +269,9 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 						'info',
 						`UpdateMicStatus for ${meetingId}: muted=${isMuted}, busy=${isBusy}, speaking=${isParticipantSpeaking}`,
 					)
+					// A defined mic status means the room is live → mark it active so the key renders
+					// its colour. The NextoTalk app sends this for every online room it owns.
+					this.state.setMeetingActive(meetingId, true)
 					this.state.updateMicStatus(meetingId, toBool(isMuted), toBool(isBusy), toBool(isParticipantSpeaking))
 				}
 				this.checkFeedbacks('mic_status')
