@@ -15,6 +15,10 @@ import { WebSocketServer, WebSocket } from 'ws'
 import { SocketCommandActionType, SocketCommandType, type SocketCommand } from './command.js'
 import { ModuleState } from './state.js'
 
+// Bump on every build so you can confirm the running module matches your build.
+// Keep in sync with package.json / companion/manifest.json.
+const MODULE_VERSION = '0.4.0'
+
 function toBool(val: any): boolean {
 	if (typeof val === 'boolean') return val
 	if (val === 'true' || val === 1 || val === '1') return true
@@ -35,14 +39,15 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 	}
 
 	async init(config: ModuleConfig): Promise<void> {
-		this.log('info', 'Initializing Nextotalk Module')
+		this.log('info', `Initializing Nextotalk Module v${MODULE_VERSION}`)
 		this.config = config
-		this.updateStatus(InstanceStatus.Ok)
+		this.updateStatus(InstanceStatus.Ok, `v${MODULE_VERSION}`)
 		this.initWebSocketServer()
 		this.updateActions()
 		this.updateFeedbacks()
 		this.updatePresets()
 		this.updateVariableDefinitions()
+		this.setVariableValues({ module_version: MODULE_VERSION })
 	}
 
 	async destroy(): Promise<void> {
@@ -62,7 +67,7 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 		const port = this.config.port || 7005
 		try {
 			this.wss = new WebSocketServer({ port })
-			this.updateStatus(InstanceStatus.Ok)
+			this.updateStatus(InstanceStatus.Ok, `v${MODULE_VERSION} · :${port}`)
 			this.log('info', `WebSocket Server started on port ${port}`)
 
 			this.wss.on('connection', (ws) => {
@@ -253,7 +258,15 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 				if (meetingId !== undefined && meetingId !== null) {
 					meetingId = String(meetingId)
 				}
-				const { isMuted, isBusy, isParticipantSpeaking, roomName } = command.data
+				const { isMuted, isBusy, isParticipantSpeaking, roomName, sdKeyId } = command.data
+
+				// Establish the action↔meeting mapping from the live status itself. The extension
+				// includes the sdKeyId (= our action id) with every update_mic_status, so the surface
+				// learns/refreshes which button drives which room — no auto-allocation needed, and it
+				// self-heals after a Companion restart (the app keeps streaming status).
+				if (sdKeyId && meetingId) {
+					this.state.mapActionToMeeting(sdKeyId, meetingId)
+				}
 
 				if (roomName) {
 					this.state.updateRoomName(meetingId, this.lineBreakedMeetingTitle(roomName))
@@ -269,6 +282,9 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 						'info',
 						`UpdateMicStatus for ${meetingId}: muted=${isMuted}, busy=${isBusy}, speaking=${isParticipantSpeaking}`,
 					)
+					// A defined mic status means the room is live → mark it active so the key renders
+					// its colour. The NextoTalk app sends this for every online room it owns.
+					this.state.setMeetingActive(meetingId, true)
 					this.state.updateMicStatus(meetingId, toBool(isMuted), toBool(isBusy), toBool(isParticipantSpeaking))
 				}
 				this.checkFeedbacks('mic_status')
@@ -339,9 +355,15 @@ export class ModuleInstance extends InstanceBase<ModuleConfig> {
 				if (meetingId !== undefined && meetingId !== null) {
 					meetingId = String(meetingId)
 				}
-				this.state.setMeetingActive(meetingId, false)
+				const sdKeyId = command.data.sdKeyId
 
-				this.log('info', `Meeting set to inactive: ${meetingId}`)
+				// Clear the action↔meeting mapping and the meeting state — not just mark it inactive
+				// — otherwise the button keeps the room name and pressing it still toggles the room
+				// (false negative). After this the key goes fully blank.
+				if (sdKeyId) this.state.mapActionToMeeting(sdKeyId, null)
+				if (meetingId) this.state.removeMeeting(meetingId)
+
+				this.log('info', `Released key ${sdKeyId} from meeting ${meetingId}`)
 				this.checkFeedbacks('mic_status')
 
 				// Send acknowledgment response if it was a request
