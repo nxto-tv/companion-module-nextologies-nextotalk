@@ -16,7 +16,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/bitfocus/companion-module-nextologies-nextotalk.git"
+		"url": "git+https://github.com/nxto-tv/companion-module-nextologies-nextotalk.git"
 	},
 	"engines": {
 		"node": "^22.20",
